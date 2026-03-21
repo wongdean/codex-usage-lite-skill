@@ -12,7 +12,7 @@ Return a compact Codex quota summary from local CLI RPC.
 Execute:
 
 ```bash
-python3 /home/coco/.openclaw/workspace/skills/codex-usage-lite/scripts/fetch_codex_usage.py
+python3 ~/.openclaw/workspace/skills/codex-usage-lite/scripts/fetch_codex_usage.py
 ```
 
 ## Output contract
