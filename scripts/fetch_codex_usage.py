@@ -5,6 +5,14 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
+
+
+COMMON_PATH_DIRS = (
+    Path.home() / ".npm-global" / "bin",
+    Path.home() / ".local" / "bin",
+    Path.home() / "bin",
+)
 
 
 def _send(proc, payload):
@@ -34,13 +42,96 @@ def _fmt_reset(epoch):
         return None
 
 
+def _npm_prefix_bin():
+    npm_bin = shutil.which("npm")
+    if not npm_bin:
+        return None
+    try:
+        result = subprocess.run(
+            [npm_bin, "config", "get", "prefix"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return None
+
+    prefix = (result.stdout or "").strip()
+    if not prefix or prefix == "undefined":
+        return None
+    return Path(prefix).expanduser() / "bin"
+
+
+def _resolve_codex_bin():
+    env_bin = os.environ.get("CODEX_BIN")
+    if env_bin and os.path.isfile(env_bin) and os.access(env_bin, os.X_OK):
+        return env_bin
+
+    direct = shutil.which("codex")
+    if direct:
+        return direct
+
+    candidates = []
+    seen = set()
+
+    def add(candidate):
+        path = Path(candidate).expanduser()
+        if path in seen:
+            return
+        seen.add(path)
+        candidates.append(path)
+
+    for directory in COMMON_PATH_DIRS:
+        add(directory / "codex")
+
+    npm_prefix_bin = _npm_prefix_bin()
+    if npm_prefix_bin is not None:
+        add(npm_prefix_bin / "codex")
+
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+
+    return None
+
+
+def _build_child_env(codex_bin):
+    env = os.environ.copy()
+    path_entries = []
+    codex_dir = str(Path(codex_bin).resolve().parent)
+    path_entries.append(codex_dir)
+
+    for directory in COMMON_PATH_DIRS:
+        path_entries.append(str(directory))
+
+    npm_prefix_bin = _npm_prefix_bin()
+    if npm_prefix_bin is not None:
+        path_entries.append(str(npm_prefix_bin))
+
+    existing = env.get("PATH", "")
+    if existing:
+        path_entries.append(existing)
+
+    deduped = []
+    seen = set()
+    for entry in path_entries:
+        if not entry or entry in seen:
+            continue
+        seen.add(entry)
+        deduped.append(entry)
+
+    env["PATH"] = os.pathsep.join(deduped)
+    return env
+
+
 def main():
-    codex_bin = shutil.which("codex")
+    codex_bin = _resolve_codex_bin()
     if not codex_bin:
-        print(json.dumps({"ok": False, "error": "codex not found in PATH"}, ensure_ascii=False))
+        print(json.dumps({"ok": False, "error": "codex not found in PATH or common npm global bin locations"}, ensure_ascii=False))
         return 2
 
-    env = os.environ.copy()
+    env = _build_child_env(codex_bin)
     proc = subprocess.Popen(
         [codex_bin, "-s", "read-only", "-a", "untrusted", "app-server"],
         stdin=subprocess.PIPE,
